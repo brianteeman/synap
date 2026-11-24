@@ -22,6 +22,48 @@ This is a proposed workflow and technical plan. It is not a description of a com
 
 The integration should keep the candidate-facing purchase and email experience on the Joomla website. Synap should be used as the examination platform, rather than as the system responsible for payment or candidate email communication.
 
+## End-to-end workflow
+
+The flowchart below shows the complete candidate journey, from purchasing an examination through to the result email, badge issuance and public certification verification. The retake route returns to the same purchase process: RSForm!Pro applies the retake price, while Synap simply receives a request for a new attempt on the selected language examination.
+
+```mermaid
+flowchart TD
+    A["Candidate visits Joomla website"] --> B["RSForm!Pro: enter details and choose exam language"]
+    B --> C{"Purchase type?"}
+    C -->|"Initial purchase"| D["RSForm!Pro applies full fee"]
+    C -->|"Retake purchase"| E["RSForm!Pro applies retake discount"]
+    D --> F["Stripe processes payment"]
+    E --> F
+    F --> G{"Payment confirmed server-to-server?"}
+    G -->|"No"| H["Do not allocate exam access"]
+    G -->|"Yes"| I["Joomla creates registration and records language"]
+    I --> J["Joomla selects the matching Synap exam"]
+    J --> K["Synap creates a fresh attempt with random questions"]
+    K --> L["Joomla stores attempt details and unique exam link"]
+    L --> M["Joomla emails candidate the exam link"]
+    M --> N["Candidate takes exam in Synap"]
+    N --> O["Synap sends final-result webhook to Joomla"]
+    O --> P["Joomla validates event and records result"]
+    P --> Q{"Passed?"}
+    Q -->|"Yes"| R["Joomla requests regular badge from Holopin"]
+    R --> S["Joomla stores private Holopin claim link"]
+    S --> T["Joomla sends congratulations email with claim link and social-sharing text"]
+    P --> U["Joomla records pass in certification records"]
+    U --> V{"Candidate consented to public listing?"}
+    V -->|"Yes"| W["Publish public Joomla verification profile"]
+    V -->|"No"| X["Keep record private; no public profile"]
+    W --> Y["Third party verifies certification using permanent Joomla URL"]
+    Q -->|"No"| Z["Joomla sends failure email with retake discount"]
+    Z --> AA["Candidate returns to RSForm!Pro and purchases retake"]
+    AA --> B
+    T --> AB["Candidate may claim and share Holopin badge"]
+    AB --> AC["Holopin badge can link to Joomla verification profile"]
+    Y --> AD["Joomla remains the authoritative certification record"]
+    AC --> AD
+```
+
+**Important:** A retake is not a separate Synap product or examination. It is a new paid registration and a new attempt on the same language-specific Synap examination. Synap does not need to know whether the candidate paid the standard fee or a discounted retake fee. The Joomla verification page remains the authoritative record; Holopin is an optional, shareable credential.
+
 ## Examination languages
 
 There are **six completely separate examinations in Synap**, one for each language. The candidate chooses their examination language in the RSForm!Pro form.
