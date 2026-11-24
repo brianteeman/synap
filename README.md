@@ -52,7 +52,7 @@ flowchart TD
     U --> V{"Candidate consented to public listing?"}
     V -->|"Yes"| W["Publish public Joomla verification profile"]
     V -->|"No"| X["Keep record private; no public profile"]
-    W --> Y["Third party verifies certification using permanent Joomla URL"]
+    W --> Y["Public can check an individuals certification status using permanent Joomla URL"]
     Q -->|"No"| Z["Joomla sends failure email with retake discount"]
     Z --> AA["Candidate returns to RSForm!Pro and purchases retake"]
     AA --> B
