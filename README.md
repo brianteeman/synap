@@ -114,6 +114,10 @@ Holopin describes regular badges as static digital badges and documents social s
 
 #### Public certified-user directory
 
+**Joomla's public verification page is the permanent, authoritative record of certification.** Holopin provides a portable digital badge that the candidate can claim and share, but it is supplementary evidence and is not the source of truth.
+
+A third party should be able to verify a person's certification using a stable Joomla URL, whether or not the candidate has claimed their Holopin badge, still has access to their Holopin account, or chooses to share the badge. The Joomla verification page should remain available for as long as the certification remains valid, subject to the site's published retention and certification policies.
+
 Joomla should also provide a public directory of people who have passed the examination, modelled on the [Joomla Certified User Directory](https://certification.joomla.org/certified-user-directory).
 
 The directory is a Joomla feature and its data should come from Joomla's own verified examination records, not from a list of people who have claimed their Holopin badge. Passing the examination is the evidence for certification; claiming a Holopin badge is optional and must not determine whether someone appears in the directory.
@@ -122,12 +126,12 @@ The public directory should allow visitors to:
 - Browse and search certified candidates.
 - See the certification or examination achieved.
 - See the date the candidate passed or was certified.
-- Open an individual public profile or verification page.
-- Verify that a named person has a recorded pass for the stated certification.
+- Open an individual public profile or verification page at a stable, permanent Joomla URL.
+- Verify that a named person has a recorded pass for the stated certification, independently of Holopin.
 
 The exact public fields and directory-publication rules must be agreed before implementation. Recommended default: ask candidates for explicit consent to appear in the public directory during registration, and publish only the fields they have agreed to make public. For example, this might include their display name, certification title and date achieved. Email addresses, payment details, Synap identifiers, examination scores, internal registration references and Holopin claim URLs must never be exposed publicly.
 
-Each public profile should have a stable URL that can be shared independently of Holopin. It should show the current certification status and enough information for a third party to verify the claim. If a certification is revoked or corrected, the directory entry must be updated accordingly.
+Each public profile should have a stable URL that can be shared independently of Holopin. This Joomla page is the canonical verification reference and should show the current certification status and enough information for a third party to verify the claim. The Holopin badge and its public profile may link back to this Joomla page, but must not replace it. If a certification is revoked or corrected, the directory entry must be updated accordingly.
 
 The directory should support pagination and search/filtering as its population grows. Search-engine indexing should be an explicit product/privacy decision, not an accidental consequence of making the pages public.
 
@@ -241,7 +245,7 @@ An administrator view should make it possible to find a candidate and see their 
 - What is the Holopin organization badge/sticker ID to issue for a successful certification?
 - Should all successful candidates be listed publicly, or should directory publication be opt-in with explicit consent? Which profile fields may be shown?
 - Should the directory be indexed by search engines, and should candidates be able to request a correction or removal?
-- Should the public directory show the Holopin badge/profile link once claimed, in addition to Joomla's own verification page?
+- Should the public directory show the Holopin badge/profile link once claimed, in addition to Joomla's own verification page? The Joomla page remains authoritative regardless.
 
 ## Scope boundary
 
