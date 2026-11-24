@@ -18,6 +18,7 @@ This is a proposed workflow and technical plan. It is not a description of a com
 | RSForm!Pro | Collects candidate details and the selected examination language, and presents the purchase/retake form. |
 | Stripe | Processes the payment and provides server-side confirmation of its status. |
 | Synap | Manages candidates, examination attempts, random question selection, examination delivery and results. |
+| Holopin | Issues a verifiable digital badge when a candidate passes. Joomla obtains and includes the individual claim link in the success email. |
 
 The integration should keep the candidate-facing purchase and email experience on the Joomla website. Synap should be used as the examination platform, rather than as the system responsible for payment or candidate email communication.
 
@@ -82,7 +83,53 @@ The integration must distinguish an attempt being submitted from its result bein
 
 ### Successful result
 
-When the candidate passes, Joomla sends a congratulations email. The email should be based on a Joomla-managed template and sent in the candidate's selected language where translations are available.
+When the candidate passes, Joomla should initiate two additional actions: issue a Holopin badge and publish the candidate's certification in the public directory (subject to the candidate's directory-publication choice).
+
+#### Issue a Holopin badge
+
+Joomla uses the Holopin API to issue the appropriate regular (static) badge for the certification. The badge represents the achievement; it is not issued for a payment or merely for completing an examination. Only a final passing result should trigger badge issuance.
+
+The proposed API flow is:
+
+1. Joomla receives and validates the final passing result from Synap.
+2. Joomla records the pass before attempting external actions.
+3. Joomla calls Holopin's regular badge API for the configured badge/sticker ID, supplying the candidate's email address only if the API flow is intended to send an email from Holopin. The preferred flow is to omit the email so that Joomla remains responsible for all candidate communication.
+4. Holopin returns a coupon identifier for a unique claim URL.
+5. Joomla constructs/stores the claim URL using the documented format, `https://holopin.io/claim/[couponId]`.
+6. Joomla includes the claim link in the success email.
+
+The documented regular-badge API endpoint is `POST https://www.holopin.io/api/sticker/share?id=[stickerId]&apiKey=[apiKey]`. The API documentation describes an optional recipient email and a coupon ID that can be used to construct an individual claim URL. The exact request format, response handling, API key permissions and any metadata fields must be confirmed during implementation.
+
+The Holopin API key and badge/sticker ID must be stored securely in Joomla configuration. Badge issuance must be idempotent: retries after a timeout or webhook redelivery must not accidentally issue multiple badges for the same certification achievement. Joomla should store the Holopin coupon ID, claim URL, badge/sticker ID, issuance status and timestamps.
+
+The success email should contain:
+- Confirmation that the candidate passed.
+- The Holopin badge claim link.
+- A short explanation of how to claim the badge.
+- A suggested social-media message the candidate can copy or adapt to announce that they passed, with a link to their claimed badge or public verification profile when available.
+
+Joomla should not publish the private claim URL in the public directory. It is an individual claim credential and belongs in the candidate's private success email. Once claimed, the candidate may share the public badge/profile URL provided by Holopin.
+
+Holopin describes regular badges as static digital badges and documents social sharing of badges and badge boards. The integration should use the regular badge flow rather than the experimental custom-image endpoint unless a later requirement specifically needs per-recipient badge artwork.
+
+#### Public certified-user directory
+
+Joomla should also provide a public directory of people who have passed the examination, modelled on the [Joomla Certified User Directory](https://certification.joomla.org/certified-user-directory).
+
+The directory is a Joomla feature and its data should come from Joomla's own verified examination records, not from a list of people who have claimed their Holopin badge. Passing the examination is the evidence for certification; claiming a Holopin badge is optional and must not determine whether someone appears in the directory.
+
+The public directory should allow visitors to:
+- Browse and search certified candidates.
+- See the certification or examination achieved.
+- See the date the candidate passed or was certified.
+- Open an individual public profile or verification page.
+- Verify that a named person has a recorded pass for the stated certification.
+
+The exact public fields and directory-publication rules must be agreed before implementation. Recommended default: ask candidates for explicit consent to appear in the public directory during registration, and publish only the fields they have agreed to make public. For example, this might include their display name, certification title and date achieved. Email addresses, payment details, Synap identifiers, examination scores, internal registration references and Holopin claim URLs must never be exposed publicly.
+
+Each public profile should have a stable URL that can be shared independently of Holopin. It should show the current certification status and enough information for a third party to verify the claim. If a certification is revoked or corrected, the directory entry must be updated accordingly.
+
+The directory should support pagination and search/filtering as its population grows. Search-engine indexing should be an explicit product/privacy decision, not an accidental consequence of making the pages public.
 
 ### Unsuccessful result
 
@@ -139,6 +186,11 @@ At a minimum, the data model should capture:
 - Score, where supplied
 - Pass/fail result
 - Result-email status and timestamp
+- Holopin badge/sticker ID
+- Holopin coupon ID and private claim URL
+- Holopin issuance status and timestamp
+- Public-directory consent/status and publication timestamp
+- Public profile URL or directory record ID
 
 ### Webhook/event processing
 
@@ -158,7 +210,9 @@ An administrator view should make it possible to find a candidate and see their 
 - **Retry handling:** If Synap is unavailable after payment, retain the paid registration as pending allocation and retry safely. The candidate must not have to pay again.
 - **Email handling:** Save the result before sending email. Record delivery attempts and allow an administrator to retry email delivery independently.
 - **Credentials:** Keep Synap and Stripe secrets on the server, outside public assets and source control. Use least-privilege credentials where supported.
-- **Data protection:** Store only the candidate and examination data needed for the service, restrict administrator access and define appropriate retention periods.
+- **Data protection:** Store only the candidate and examination data needed for the service, restrict administrator access and define appropriate retention periods. Obtain and record explicit consent before publishing personal details in the public certified-user directory; provide a process for correcting or removing public profile information where appropriate.
+- **Public/private separation:** Never expose email addresses, payment data, internal identifiers, examination scores or Holopin claim URLs in public directory pages or public APIs.
+- **Holopin issuance:** Issue a badge only for a final passing result, store the returned coupon/claim reference securely, and prevent duplicate issuance when events are retried.
 - **Logging:** Log integration failures and useful reference IDs without exposing API tokens, payment credentials or unnecessary personal data.
 
 ## Proposed implementation stages
@@ -168,9 +222,11 @@ An administrator view should make it possible to find a candidate and see their 
 3. **Verify result notifications.** Configure a test webhook, inspect its payload and authentication, and confirm when a final pass/fail result is available.
 4. **Implement the Joomla integration.** Add configuration for the six language-to-examination mappings, registration/attempt storage, API service and webhook endpoint.
 5. **Integrate RSForm!Pro and Stripe.** Connect confirmed payment events to registration and attempt allocation. Keep initial and retake pricing in the form/payment workflow.
-6. **Implement Joomla emails.** Add access, congratulations and failure/retake templates, with language-aware content as required.
-7. **Add administration and recovery tools.** Provide registration/attempt views, processing status and safe email/allocation retries.
-8. **Test end to end.** Cover each language, successful and failed payments, pass and fail results, retake purchases, duplicate webhooks, email failures and Synap/API outages.
+6. **Integrate Holopin.** Configure the regular badge/sticker ID and API credentials, issue a badge after a final pass, and verify that Joomla receives and stores the unique claim URL.
+7. **Implement Joomla emails.** Add access, congratulations and failure/retake templates, with language-aware content as required. Include the Holopin claim link and suggested social-sharing text in the success email.
+8. **Build the public certified-user directory.** Add candidate consent, searchable public listings and individual verification pages using Joomla's verified pass records.
+9. **Add administration and recovery tools.** Provide registration/attempt views, badge issuance and directory-publication status, plus safe email/allocation/badge retries.
+10. **Test end to end.** Cover each language, successful and failed payments, pass and fail results, retake purchases, duplicate webhooks, duplicate badge prevention, directory consent, email failures and Synap/Holopin API outages.
 
 ## Open questions to resolve before implementation
 
@@ -182,7 +238,11 @@ An administrator view should make it possible to find a candidate and see their 
 - Which RSForm!Pro payment-confirmation hook/event is appropriate for the installed version and Stripe integration?
 - Should retake eligibility be restricted to the language of the failed attempt, or may the candidate choose any of the six languages when purchasing again?
 - Should candidate emails be available in all six languages?
+- What is the Holopin organization badge/sticker ID to issue for a successful certification?
+- Should all successful candidates be listed publicly, or should directory publication be opt-in with explicit consent? Which profile fields may be shown?
+- Should the directory be indexed by search engines, and should candidates be able to request a correction or removal?
+- Should the public directory show the Holopin badge/profile link once claimed, in addition to Joomla's own verification page?
 
 ## Scope boundary
 
-This project is an integration between Joomla and Synap. It does not implement examination content, question randomisation, marking, payment processing or a separate examination engine. Those responsibilities remain with Synap, Stripe and RSForm!Pro respectively.
+This project integrates Joomla with RSForm!Pro, Stripe, Synap and Holopin. It does not implement examination content, question randomisation or marking; those remain Synap responsibilities. Stripe processes payments, RSForm!Pro manages the purchase form, Holopin issues the digital badge, and Joomla coordinates the workflow, emails and public certification directory.
