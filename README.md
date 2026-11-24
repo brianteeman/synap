@@ -32,14 +32,14 @@ The six Synap examination IDs will be configurable in Joomla. The actual IDs and
 
 | Language | Synap examination |
 | --- | --- |
-| Language 1 | English |
-| Language 2 | German |
-| Language 3 | Spanish |
-| Language 4 | French |
-| Language 5 | Italian |
-| Language 6 | Dutch |
+| English | ex-en-j6  |
+| German |  ex-de-j6|
+| Spanish |  ex-es-j6|
+| French | ex-fr-j6 |
+| Italian  | ex-it-j6 |
+| Dutch  | ex-nl-j6 |
 
-The table deliberately uses placeholders until the six languages and their Synap examination IDs are confirmed.
+The table deliberately uses placeholders until the Synap examination IDs are confirmed.
 
 ## Initial purchase workflow
 
