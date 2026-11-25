@@ -2,11 +2,11 @@
 
 ## Project overview
 
-This repository documents a proposed integration between **Joomla**, **RSForm!Pro**, **Stripe** and the **Synap examination platform**.
+This repository documents a proposed integration between **Joomla**, the **Joomla Identity portal**, **RSForm!Pro**, **Stripe** and the **Synap examination platform**, with **Holopin** providing digital certification badges.
 
-The aim is to let candidates purchase an examination on a Joomla website, receive a personal link to take the examination in Synap, and receive an email from Joomla when their result is available.
+The aim is to let individuals authenticate on the Joomla website using the Joomla Identity portal, purchase or redeem access to an examination, receive a personal link to take the examination in Synap, and receive an email from Joomla when their result is available. Employers and organisations will also be able to purchase examination credits in bulk and distribute individual-use vouchers to their staff or members.
 
-Joomla will manage the purchase, candidate communication and registration history. Synap will deliver and mark the examination.
+Joomla will manage Identity-based access to the Joomla service, purchases and voucher redemption, candidate communication and registration history. Synap will deliver and mark the examination.
 
 This is a proposed workflow and technical plan. It is not a description of a completed integration. Exact Synap API endpoints, request/response fields, webhook authentication and attempt-link behaviour must be verified against the API access available to the Synap account before implementation.
 
@@ -14,63 +14,78 @@ This is a proposed workflow and technical plan. It is not a description of a com
 
 | System | Responsibility |
 | --- | --- |
-| Joomla | Orchestrates the workflow, stores registrations and results, and sends candidate emails. |
-| RSForm!Pro | Collects candidate details and the selected examination language, and presents the purchase/retake form. |
+| Joomla | Orchestrates the workflow, integrates with the Joomla Identity portal, stores registrations and results, manages organisation voucher allocations, and sends candidate emails. |
+| Joomla Identity portal | Provides the candidate's Joomla identity and authentication. Its available profile information, including the candidate's avatar where permitted, can be used by the Joomla website. |
+| RSForm!Pro | Collects purchase details and the selected examination language, and presents individual, organisation and retake purchase forms. |
 | Stripe | Processes the payment and provides server-side confirmation of its status. |
 | Synap | Manages candidates, examination attempts, random question selection, examination delivery and results. |
 | Holopin | Issues a verifiable digital badge when a candidate passes. Joomla obtains and includes the individual claim link in the success email. |
 
-The integration should keep the candidate-facing purchase and email experience on the Joomla website. Synap should be used as the examination platform, rather than as the system responsible for payment or candidate email communication.
+The integration should keep the candidate-facing purchase, account experience and email communication on the Joomla website. Candidates use the Joomla Identity portal rather than creating a separate Joomla-site username and password. Joomla can use profile information made available by Identity, including the user's avatar, subject to the portal's supported integration and permissions. This does not yet establish single sign-on to Synap: Synap account authentication and passwordless exam access remain subject to Synap's response. Synap should be used as the examination platform, rather than as the system responsible for payment or candidate email communication.
+
+## Joomla Identity and candidate profile
+
+Candidates will use the **Joomla Identity portal** to authenticate to the Joomla certification website. They should not need to create and maintain a separate local Joomla website account with another username and password. The Joomla site will rely on the Identity portal for the candidate's identity and sign-in.
+
+Where the Identity portal makes profile attributes available to the integration, Joomla should use them to populate the candidate's profile and registration details. This includes the candidate's avatar, so that the same identity and profile presentation can be used across the certification website and directory. The implementation must respect the Identity portal's available API/claims, permissions and profile-sharing rules; it must not assume that every profile field is available.
+
+The Joomla Identity login is the authentication mechanism for the Joomla website. It does **not** automatically mean that the candidate is also authenticated to Synap. The current Synap test workflow still requires the candidate to sign in to Synap before opening the personalised exam link. A passwordless Synap exam link or another supported single-sign-on arrangement is being discussed with Synap. Until that is confirmed, the Joomla and Synap authentication steps must be treated as separate.
+
+Joomla should associate its local certification records with a stable Identity account identifier, rather than relying on an email address as the only key. Email addresses and profile attributes may change; the stable identity reference is needed to connect purchases, voucher redemptions, exam attempts and certification records to the same person.
+
 
 ## End-to-end workflow
 
-The flowchart below shows the complete candidate journey, including the separate submission, proctoring-review and result-release stages. A submitted attempt is not necessarily a final result. If Synap flags an attempt for proctoring review, Joomla records the pending review, tells the candidate that their result will be sent within one day, and notifies the Joomla administrators. Joomla only processes a pass or fail after Synap releases the result. The retake route returns to the same purchase process: RSForm!Pro applies the retake price, while Synap receives a new registration for the selected language examination.
+The flowchart below shows the individual purchase journey, including the separate submission, proctoring-review and result-release stages. Organisation purchases follow a separate bulk-purchase route: the organisation buys a quantity of exam credits, receives individual-use 100% discount vouchers, and distributes them to its staff or members. Each individual then signs in through Joomla Identity, redeems a voucher through the normal Joomla purchase form and receives their own exam registration. A submitted attempt is not necessarily a final result. If Synap flags an attempt for proctoring review, Joomla records the pending review, tells the candidate that their result will be sent within one day, and notifies the Joomla administrators. Joomla only processes a pass or fail after Synap releases the result. The retake route returns to the same purchase process: RSForm!Pro applies the retake price, while Synap receives a new registration for the selected language examination.
 
 ```mermaid
 flowchart TD
-    A["Candidate visits Joomla website"] --> B["RSForm!Pro: enter details and choose exam language"]
+    A["Candidate visits Joomla website and signs in with Joomla Identity"] --> B["RSForm!Pro: choose exam language and purchase or redeem voucher"]
     B --> C{"Purchase type?"}
-    C -->|"Initial purchase"| D["RSForm!Pro applies full fee"]
+    C -->|"Individual purchase"| D["RSForm!Pro applies full fee"]
     C -->|"Retake purchase"| E["RSForm!Pro applies retake discount"]
-    D --> F["Stripe processes payment"]
-    E --> F
-    F --> G{"Payment confirmed server-to-server?"}
-    G -->|"No"| H["Do not allocate exam access"]
-    G -->|"Yes"| I["Joomla creates registration and records language"]
-    I --> J["Joomla selects the matching Synap exam and its configured user group"]
-    J --> K["Joomla registers candidate with Synap; group membership generates a fresh attempt"]
-    K --> L["Joomla stores Synap user and attempt details"]
-    L --> M["Joomla emails candidate exam access instructions using the agreed password workflow"]
-    M --> N["Candidate signs in to Synap and takes the exam"]
-    N --> O["Synap notifies Joomla that the attempt has been submitted"]
-    O --> P["Joomla retrieves the attempt from the Synap API"]
-    P --> Q{"Does the attempt require proctoring review?"}
-    Q -->|"No"| R["Wait for Synap to release the result"]
-    Q -->|"Yes"| S["Joomla records a pending review and a 24-hour result deadline"]
-    S --> T["Joomla emails candidate: proctoring review required; results within one day"]
-    S --> U["Joomla notifies administrators that the attempt needs review"]
-    U --> V["Administrator reviews the attempt in Synap"]
-    V --> W["Synap finalises and releases the result"]
-    R --> W
-    W --> X["Synap notifies Joomla that the result has been released"]
-    X --> Y["Joomla retrieves attempt and verifies resultsStatus is released"]
-    Y --> Z["Joomla records final result and closes any pending review"]
-    Z --> AA{"Passed?"}
-    AA -->|"Yes"| AB["Joomla requests regular badge from Holopin"]
-    AB --> AC["Joomla stores private Holopin claim link"]
-    AC --> AD["Joomla sends congratulations email with claim link and social-sharing text"]
-    Z --> AE["Joomla records pass in certification records"]
-    AE --> AF{"Candidate consented to public listing?"}
-    AF -->|"Yes"| AG["Publish public Joomla verification profile"]
-    AF -->|"No"| AH["Keep record private; no public profile"]
-    AG --> AI["Public can verify certification using permanent Joomla URL"]
-    AA -->|"No"| AJ["Joomla sends failure email with retake discount"]
-    AJ --> AK["Candidate returns to RSForm!Pro and purchases retake"]
-    AK --> B
-    AD --> AL["Candidate may claim and share Holopin badge"]
-    AL --> AM["Holopin badge can link to Joomla verification profile"]
-    AI --> AN["Joomla remains the authoritative certification record"]
-    AM --> AN
+    C -->|"Organisation voucher"| F["Validate and redeem 100% voucher"]
+    D --> G["Stripe processes payment"]
+    E --> G
+    F --> H["No candidate payment due"]
+    G --> I{"Payment confirmed or voucher valid?"}
+    H --> I
+    I -->|"No"| J["Do not allocate exam access"]
+    I -->|"Yes"| K["Joomla creates registration and records language"]
+    K --> L["Joomla selects the matching Synap exam and its configured user group"]
+    L --> M["Joomla registers candidate with Synap; group membership generates a fresh attempt"]
+    M --> N["Joomla stores Synap user and attempt details"]
+    N --> O["Joomla emails candidate exam access instructions using the agreed Synap access workflow"]
+    O --> P["Candidate opens exam link and completes Synap authentication if required"]
+    P --> Q["Synap notifies Joomla that the attempt has been submitted"]
+    Q --> R["Joomla retrieves the attempt from the Synap API"]
+    R --> S{"Does the attempt require proctoring review?"}
+    S -->|"No"| T["Wait for Synap to release the result"]
+    S -->|"Yes"| U["Joomla records a pending review and a 24-hour result deadline"]
+    U --> V["Joomla emails candidate: proctoring review required; results within one day"]
+    U --> W["Joomla notifies administrators that the attempt needs review"]
+    W --> X["Administrator reviews the attempt in Synap"]
+    X --> Y["Synap finalises and releases the result"]
+    T --> Y
+    Y --> Z["Synap notifies Joomla that the result has been released"]
+    Z --> AA["Joomla retrieves attempt and verifies resultsStatus is released"]
+    AA --> AB["Joomla records final result and closes any pending review"]
+    AB --> AC{"Passed?"}
+    AC -->|"Yes"| AD["Joomla requests regular badge from Holopin"]
+    AD --> AE["Joomla stores private Holopin claim link"]
+    AE --> AF["Joomla sends congratulations email with claim link and social-sharing text"]
+    AB --> AG["Joomla records pass in certification records"]
+    AG --> AH{"Candidate consented to public listing?"}
+    AH -->|"Yes"| AI["Publish public Joomla verification profile"]
+    AH -->|"No"| AJ["Keep record private; no public profile"]
+    AI --> AK["Public can verify certification using permanent Joomla URL"]
+    AC -->|"No"| AL["Joomla sends failure email with retake discount"]
+    AL --> AM["Candidate returns to RSForm!Pro and purchases retake"]
+    AM --> B
+    AF --> AN["Candidate may claim and share Holopin badge"]
+    AN --> AO["Holopin badge can link to Joomla verification profile"]
+    AK --> AP["Joomla remains the authoritative certification record"]
+    AO --> AP
 ```
 
 **Important:** A retake is not a separate Synap product or examination. It is a new paid registration and a new attempt on the same language-specific Synap examination. Synap does not need to know whether the candidate paid the standard fee or a discounted retake fee. The Joomla verification page remains the authoritative record; Holopin is an optional, shareable credential.
@@ -94,18 +109,41 @@ The six Synap examination IDs will be configurable in Joomla. The actual IDs and
 
 The table deliberately uses placeholders until the Synap examination IDs are confirmed.
 
-## Initial purchase workflow
+## Individual examination purchase workflow
 
-1. The candidate opens the examination purchase form on the Joomla website.
-2. RSForm!Pro collects the candidate's details and their choice of examination language.
-3. The candidate pays the examination fee using Stripe.
-4. Joomla waits for reliable server-side confirmation that the payment succeeded. A browser redirect or return to a thank-you page is not sufficient proof of payment.
-5. Once payment is confirmed, Joomla creates a registration record and selects the Synap examination ID mapped to the chosen language.
-6. Joomla uses the Synap API to find or create the candidate as required, and requests access to the selected examination.
-7. Synap provides a candidate-specific examination link (subject to confirmation of the exact API operation and behaviour).
-8. Joomla stores the relevant Synap identifiers and the access link, then sends the candidate an examination email containing the link and instructions.
+1. The candidate signs in to the Joomla website using the Joomla Identity portal.
+2. Joomla obtains the candidate's stable Identity account reference and the profile details made available by the portal, including the avatar where supported and permitted.
+3. The candidate opens the examination purchase form. RSForm!Pro presents the available examination languages and the individual purchase options.
+4. The candidate pays the examination fee using Stripe.
+5. Joomla waits for reliable server-side confirmation that the payment succeeded. A browser redirect or return to a thank-you page is not sufficient proof of payment.
+6. Once payment is confirmed, Joomla creates a registration record linked to the Identity account and selects the Synap examination ID mapped to the chosen language.
+7. Joomla uses the Synap API to find or create the candidate as required, and requests access to the selected examination.
+8. Synap provides a candidate-specific examination link (subject to confirmation of the exact API operation and behaviour).
+9. Joomla stores the relevant Synap identifiers and the access link, then sends the candidate an examination email containing the link and instructions.
 
 A payment must not result in examination access being issued more than once. Payment notifications and the allocation process must therefore be safe to retry.
+
+## Organisation and bulk examination purchases
+
+An employer, organisation or other group should be able to purchase multiple examination places in one transaction for its staff or members. This is a separate purchase route from an individual buying an examination for themselves.
+
+The proposed workflow is:
+
+1. An organisation representative opens the organisation purchase form on the Joomla website and provides the organisation and purchaser details, together with the number of examination places required.
+2. RSForm!Pro calculates the total price for the requested quantity and Stripe processes the payment.
+3. Joomla confirms the payment server-to-server and creates an organisation purchase record with the quantity purchased.
+4. Joomla generates that number of **unique, 100% discount vouchers**, with each voucher redeemable for one examination purchase. The vouchers are associated with the organisation purchase and are delivered to the purchaser for distribution to staff or members.
+5. The organisation distributes one voucher to each intended candidate. Joomla does not need to create Synap accounts or examination attempts for the organisation's entire list of staff at this stage.
+6. Each individual visits the Joomla website, signs in using their own Joomla Identity account, selects the examination language and enters their voucher in the normal examination purchase form.
+7. Joomla validates the voucher, confirms that it is unused and eligible, and applies a 100% discount. The individual completes the checkout/redemption process without paying for the examination.
+8. Joomla marks the voucher as redeemed and links the redemption to that individual's Identity account and examination registration.
+9. Joomla then follows the normal Synap registration and attempt-allocation process for the selected language. The individual receives their own candidate-specific exam access instructions from Joomla.
+
+Vouchers should be unique, single-use and generated only after the organisation's payment has been confirmed. They should be associated with the relevant organisation purchase, quantity, permitted examination or examination family, creation date and (if required) expiry date. The server must validate each voucher at redemption; a client-side discount value must never be trusted. Concurrent redemption attempts must not allow the same voucher to be used more than once.
+
+The organisation is purchasing a quantity of examination credits, not registering named candidates or purchasing Synap accounts. Each candidate redeems their own voucher and creates their own registration under their own Joomla Identity account. This keeps candidate identity, examination language, consent, result communication and certification records attached to the individual who actually takes the examination.
+
+Joomla should provide an administration view of organisation purchases, the number of vouchers issued, redeemed and remaining, and the associated redemption records. The organisation purchaser may be given a simple way to retrieve or distribute the unused vouchers. Whether an organisation should be able to see the names or progress/results of people who redeem its vouchers is a separate privacy and product decision; the default should be not to disclose individual candidate results to the organisation.
 
 ## Candidate password and account-access workflow
 
@@ -293,10 +331,21 @@ Joomla should retain a record of each paid registration and each examination att
 
 At a minimum, the data model should capture:
 
+### Organisation purchase and vouchers
+
+- Joomla organisation purchase ID
+- Organisation name and purchaser contact details
+- Quantity purchased and payment amount/currency
+- Stripe payment/session/transaction reference and payment status
+- Number of vouchers generated, redeemed and remaining
+- Voucher code or secure voucher reference, status, expiry (if used) and redemption timestamp
+- Identity account ID and registration ID associated with each redemption
+
 ### Registration
 
 - Joomla registration ID
-- Candidate name and email address
+- Stable Joomla Identity account identifier
+- Candidate name, email address and profile/avatar reference where available
 - Selected examination language
 - RSForm!Pro submission reference
 - Stripe payment/session/transaction reference
@@ -336,7 +385,9 @@ An administrator view should make it possible to find a candidate and see their 
 
 ## Reliability and security requirements
 
-- **Payment verification:** Only a verified server-to-server Stripe payment confirmation may trigger examination allocation.
+- **Payment verification:** Only a verified server-to-server Stripe payment confirmation may trigger an individual examination allocation or the creation of organisation vouchers.
+- **Identity:** Link candidate registrations and voucher redemptions to a stable Joomla Identity account identifier. Use only profile attributes and avatar data made available under the Identity portal's supported integration and permissions.
+- **Voucher security:** Generate unique vouchers only after confirmed organisation payment. Validate them server-side, make each voucher single-use, prevent concurrent duplicate redemption and never trust a discount amount supplied by the browser.
 - **Webhook authentication:** Validate Synap webhook requests using the authentication mechanism documented for the enabled Synap API version. Do not trust an unauthenticated POST.
 - **Idempotency:** Repeated Stripe or Synap notifications must not create duplicate registrations, attempts or emails.
 - **Retry handling:** If Synap is unavailable after payment, retain the paid registration as pending allocation and retry safely. The candidate must not have to pay again.
@@ -353,11 +404,11 @@ An administrator view should make it possible to find a candidate and see their 
 
 ## Proposed implementation stages
 
-1. **Verify Synap access and API capabilities.** Confirm the API version, authentication, account permissions and availability of the required user, examination, attempt, candidate-link and webhook operations.
+1. **Verify identity and Synap access.** Confirm the Joomla Identity integration and the profile attributes available to the site. Confirm the Synap API version, authentication, account permissions and availability of the required user, examination, attempt, candidate-link and webhook operations.
 2. **Build a standalone API test.** Authenticate, retrieve the six examinations, find or create a test candidate, create a fresh attempt and obtain its candidate-specific link.
 3. **Verify submission and result-release notifications.** Configure the `Exam Attempt Submitted` and `Exam Attempt Released` webhooks with HTTP Basic Authentication. The event names and payload shapes have been verified in live tests; production delivery, retry behaviour and end-to-end handling must still be tested.
 4. **Implement the Joomla integration.** Add configuration for the six language-to-examination mappings, registration/attempt storage, API service and webhook endpoint.
-5. **Integrate RSForm!Pro and Stripe.** Connect confirmed payment events to registration and attempt allocation. Keep initial and retake pricing in the form/payment workflow.
+5. **Integrate RSForm!Pro and Stripe.** Connect confirmed individual payments to registration and attempt allocation. Add organisation bulk purchases, voucher generation and single-use voucher redemption. Keep individual, retake and organisation pricing in the Joomla/RSForm!Pro payment workflow.
 6. **Integrate Holopin.** Configure the regular badge/sticker ID and API credentials, issue a badge after a final pass, and verify that Joomla receives and stores the unique claim URL.
 7. **Implement Joomla emails.** Add access, congratulations and failure/retake templates, with language-aware content as required. Include the Holopin claim link and suggested social-sharing text in the success email.
 8. **Build the public certified-user directory.** Add candidate consent, searchable public listings and individual verification pages using Joomla's verified pass records.
@@ -366,6 +417,7 @@ An administrator view should make it possible to find a candidate and see their 
 
 ## Open questions to resolve before implementation
 
+- Which Joomla Identity integration/claims are available to the site, including the stable account identifier and avatar/profile fields?
 - Which six languages are offered, and what are their corresponding Synap examination IDs?
 - Does the Synap account have access to the required API version, candidate management, attempt creation and webhooks?
 - Which exact API operation creates a fresh attempt and returns a new candidate-specific examination link?
@@ -375,6 +427,8 @@ An administrator view should make it possible to find a candidate and see their 
 - Does Synap always send a submission notification before a result-release notification, including when no proctoring review is required?
 - Which Synap administrator roles and actions are required to review a proctoring flag, finalise marks and release results?
 - Which RSForm!Pro payment-confirmation hook/event is appropriate for the installed version and Stripe integration?
+- What organisation purchase quantities, pricing tiers, voucher expiry rules and permitted examination types should be supported?
+- Should organisation purchasers be able to see voucher redemption status only, or any additional information about the candidates who redeem them? The default proposed policy is to keep individual results private.
 - Should retake eligibility be restricted to the language of the failed attempt, or may the candidate choose any of the six languages when purchasing again?
 - Should candidate emails be available in all six languages?
 - What is the Holopin organization badge/sticker ID to issue for a successful certification?
