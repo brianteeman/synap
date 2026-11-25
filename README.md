@@ -159,7 +159,7 @@ The test also confirmed that attempts can be listed with `GET /v3/attempts` usin
 
 An examination being submitted and its result being released are separate stages. Synap may need to complete marking, finalise the marks and/or complete a proctoring review before the result is released. Joomla must not treat a score or grade returned for a submitted attempt as final until the attempt reports `resultsStatus: released`.
 
-The preferred notification mechanism is a Synap webhook to a dedicated Joomla endpoint. The exact event names, payloads, delivery behaviour and authentication/signature mechanism must be confirmed against the Synap API version enabled for the account. The intended flow uses one notification when the attempt is submitted and another when the result is released. If Synap does not provide a distinct submission event, Joomla will need another reliable way to detect submitted attempts.
+The preferred notification mechanism is a Synap webhook to a dedicated Joomla endpoint. Live testing on 25 November 2026 confirmed two separate webhook subscriptions: `Exam Attempt Submitted` and `Exam Attempt Released`. The delivered payloads identify these as `exam.submitted` and `exam.released` in `meta.eventName`. The Synap webhook configuration supports HTTP Basic Authentication. The observed payload structures and receiver test are documented in [Verified Synap API and webhook findings](#verified-synap-api-and-webhook-findings). Delivery retry guarantees and the exact production authentication configuration should still be confirmed before launch.
 
 ### When an attempt is submitted
 
@@ -355,7 +355,7 @@ An administrator view should make it possible to find a candidate and see their 
 
 1. **Verify Synap access and API capabilities.** Confirm the API version, authentication, account permissions and availability of the required user, examination, attempt, candidate-link and webhook operations.
 2. **Build a standalone API test.** Authenticate, retrieve the six examinations, find or create a test candidate, create a fresh attempt and obtain its candidate-specific link.
-3. **Verify submission and result-release notifications.** Configure test webhooks, inspect their payloads and authentication, establish the exact event names, and confirm how Joomla detects a submitted attempt, a required proctoring review and a released final result.
+3. **Verify submission and result-release notifications.** Configure the `Exam Attempt Submitted` and `Exam Attempt Released` webhooks with HTTP Basic Authentication. The event names and payload shapes have been verified in live tests; production delivery, retry behaviour and end-to-end handling must still be tested.
 4. **Implement the Joomla integration.** Add configuration for the six language-to-examination mappings, registration/attempt storage, API service and webhook endpoint.
 5. **Integrate RSForm!Pro and Stripe.** Connect confirmed payment events to registration and attempt allocation. Keep initial and retake pricing in the form/payment workflow.
 6. **Integrate Holopin.** Configure the regular badge/sticker ID and API credentials, issue a badge after a final pass, and verify that Joomla receives and stores the unique claim URL.
@@ -371,7 +371,7 @@ An administrator view should make it possible to find a candidate and see their 
 - Which exact API operation creates a fresh attempt and returns a new candidate-specific examination link?
 - What is the supported password-setup process for a candidate created through the API? Can the v3 API generate or return a one-time password-setup/reset URL without Synap sending its own email, so Joomla can send the link? What are the endpoint, permissions, expiry and single-use rules?
 - Does Synap apply the random-question configuration independently to every attempt created through the API?
-- What are the exact webhook event names and payloads for an attempt being submitted and a result being released, and how are the webhooks authenticated?
+- What are Synap's webhook retry policy, timeout expectations and delivery guarantees? Are there any additional recommended controls beyond HTTP Basic Authentication?
 - Does Synap always send a submission notification before a result-release notification, including when no proctoring review is required?
 - Which Synap administrator roles and actions are required to review a proctoring flag, finalise marks and release results?
 - Which RSForm!Pro payment-confirmation hook/event is appropriate for the installed version and Stripe integration?
@@ -385,3 +385,120 @@ An administrator view should make it possible to find a candidate and see their 
 ## Scope boundary
 
 This project integrates Joomla with RSForm!Pro, Stripe, Synap and Holopin. It does not implement examination content, question randomisation or marking; those remain Synap responsibilities. Stripe processes payments, RSForm!Pro manages the purchase form, Holopin issues the digital badge, and Joomla coordinates the workflow, emails and public certification directory.
+
+
+## Verified Synap API and webhook findings
+
+The following findings were verified against the live Synap v3 API and webhook configuration during standalone testing on 25 November 2026. They are observations from the test account and should be rechecked against the production portal configuration before launch.
+
+### API access and candidate registration
+
+- The API base used for testing was `https://api.synap.ac/v3`.
+- A personal access token was accepted using the `Authorization: Bearer` header and the `Accept: application/vnd.api+json` header.
+- `GET /portals/current` and `GET /exam-v-2s` returned successfully.
+- `POST /user-registrations` created a candidate when supplied with the required name, email address, password, locale, external ID and user-group relationship. The optional `registrationSource` attribute was omitted; Synap support confirmed that it defaults to generated.
+- The registration request used `welcomeEmailDisabled: true` so candidate communication remains under Joomla's control.
+- The registration response did not consistently include a `generatedAttempt` relationship, even though an attempt was created. Do not rely on that relationship being present.
+- Adding the candidate to the relevant student user group caused Synap to generate an attempt automatically. The attempt's registration method was `userGroup`.
+- Attempts can be located with `GET /attempts?filter={"owner":"<synapUserId>"}` and retrieved individually with `GET /attempts/{attemptId}`. An unfiltered `GET /attempts?filter={}` returned a validation error because the owner filter was required in this test.
+- The candidate-specific exam URL observed and successfully opened in a browser was `https://<portal-host>/exam-hall/{attemptId}`. The portal host and attempt ID must be taken from the configured account and API response; do not hard-code the test portal or attempt.
+- The password policy rejected a test password that did not include the required character classes. The observed policy required at least eight characters, including uppercase, lowercase and a digit. Confirm the production account's policy rather than relying on this test value.
+
+### Webhook configuration and receiver
+
+Two separate webhook subscriptions were created in Synap because the configuration allowed one event per webhook:
+
+| Synap webhook event selection | Delivered `meta.eventName` |
+| --- | --- |
+| Exam Attempt Submitted | `exam.submitted` |
+| Exam Attempt Released | `exam.released` |
+
+Both subscriptions can point to the same endpoint. The test endpoint used HTTPS and HTTP Basic Authentication. The Synap webhook configuration exposes a Basic authentication option; the username and password must match the values configured on the receiving server.
+
+A small PHP receiver was deployed for testing. It:
+
+- Requires valid HTTP Basic Authentication and returns HTTP 401 when credentials are missing or incorrect.
+- Accepts POST requests and returns HTTP 405 for other methods.
+- Reads the raw request body and appends it to a JSON Lines log.
+- Stores the log and credential file outside the public web directory, with restrictive file permissions.
+- Does not write the Basic Authentication password to the request log.
+
+The receiver was tested manually: an unauthenticated GET returned HTTP 401, an authenticated JSON POST returned HTTP 200 with `{"received":true}`, and the test payload was confirmed in the private log. A deliberately incorrect password in the Synap configuration caused a 401 delivery failure; correcting the password allowed delivery. This confirms the authentication arrangement, but the temporary test receiver is not itself the Joomla production webhook implementation.
+
+Do not commit webhook credentials, API tokens, raw production payloads, candidate passwords or private log files to this repository. Production logging should redact credentials and avoid retaining unnecessary candidate or examination data.
+
+### Observed webhook payloads
+
+Both event payloads contained a `meta` object with a timestamp and event name. The event name is not at the top level.
+
+For `exam.submitted`, the observed payload had these top-level fields:
+
+```text
+user, portal, meta, attempt, test, id, timeStarted,
+timeCompleted, timeSpentInMs, exam
+```
+
+The attempt ID was available at the top level as `id`. The submitted event included a full attempt object. In the tested attempt, the candidate had submitted the exam, but the result was initially pending and marking was ready to finalise. A provisional score and grade were present. Those values must not be treated as final.
+
+For `exam.released`, the observed payload had these top-level fields:
+
+```text
+user, portal, meta, attempt, test, exam
+```
+
+The attempt ID was nested at `attempt.id`, not at the top level. The final result fields were nested within `attempt`, including:
+
+- `attempt.results.status` — observed as `released`.
+- `attempt.results.markingStatus` — observed as `completed`.
+- `attempt.score` and `attempt.scoreFrac`.
+- `attempt.gradeOutcome`.
+- `attempt.grade.isPass` and `attempt.grade.label`.
+- `attempt.audit.releasedAt`.
+
+The two event payloads are therefore not structurally identical. Joomla's handler must branch on `meta.eventName` and extract the attempt ID from the appropriate location:
+
+| Event | Attempt ID location |
+| --- | --- |
+| `exam.submitted` | Top-level `id` |
+| `exam.released` | `attempt.id` |
+
+The event names and field paths above are based on actual deliveries from the test account. Joomla should still validate the payload shape defensively and retrieve the attempt through `GET /attempts/{attemptId}` before changing the certification record, sending result emails or issuing a badge. The webhook is a notification, not the authoritative database for Joomla's certification workflow.
+
+### Submission, proctoring and release are separate states
+
+The live test confirmed that submission, proctor review, marking finalisation and result release are distinct stages.
+
+For a submitted attempt that requires proctoring review, the API initially returned fields including:
+
+- `examStatus: submitted`
+- `resultsStatus: pending`
+- `resultsMarkingStatus: readyToFinalise`
+- `proctorRequiresReview: true`
+- `proctorStatus: readyForReview`
+
+A provisional score and grade were also present. These are not a final result.
+
+After an administrator approved the proctoring review, the attempt showed `proctorIsApproved: true`, `proctorStatus: passed` and `proctorRequiresReview: false`. Marking was then finalised, with `resultsStatus: finalised` and `resultsMarkingStatus: completed`. Only after a separate release action did the attempt report `resultsStatus: released`; the deferred lock was cleared and the release audit information was populated.
+
+A separate test attempt was automatically approved. Its release webhook contained `attempt.proctorStatus: autoApproved`, `attempt.results.status: released`, a final score and a final grade. This demonstrates that not every attempt requires a manual review.
+
+The Joomla implementation must therefore:
+
+1. On `exam.submitted`, extract the top-level `id`, retrieve the attempt from Synap and inspect its current proctoring and result states.
+2. If review is required, record the pending review, notify the candidate that their result will be provided within one day (24 hours), and notify Joomla administrators. Do not send a pass/fail email.
+3. On `exam.released`, extract `attempt.id`, retrieve the attempt again and confirm that the API reports `resultsStatus: released`.
+4. Only after that confirmation, record the final result and perform the pass/fail email, Holopin and certification-directory actions.
+5. Make processing idempotent so duplicate deliveries cannot create duplicate review notifications, result emails or badges.
+
+The webhook event's own `attempt.results.status` or `attempt.grade` can be useful for diagnostics, but the retrieved API attempt should be used as the final check before taking consequential action.
+
+### Remaining verification
+
+The live tests establish that the two event types can be delivered to one Basic-Authenticated HTTPS receiver and that their payloads expose the fields described above. The following still need confirmation before production:
+
+- Synap's retry policy, delivery timeout and failure/replay controls.
+- Whether webhook deliveries include a unique event ID or other deduplication identifier in addition to `meta.timestamp`.
+- Whether the production portal uses the same payload fields and event names.
+- The correct production user-group and examination mapping for all six languages.
+- The supported candidate password-setup/reset-link API operation, if available.
+- Behaviour under duplicate, delayed and out-of-order webhook deliveries.
