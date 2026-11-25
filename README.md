@@ -143,7 +143,9 @@ Vouchers should be unique, single-use and generated only after the organisation'
 
 The organisation is purchasing a quantity of examination credits, not registering named candidates or purchasing Synap accounts. Each candidate redeems their own voucher and creates their own registration under their own Joomla Identity account. This keeps candidate identity, examination language, consent, result communication and certification records attached to the individual who actually takes the examination.
 
-Joomla should provide an administration view of organisation purchases, the number of vouchers issued, redeemed and remaining, and the associated redemption records. The organisation purchaser may be given a simple way to retrieve or distribute the unused vouchers. Whether an organisation should be able to see the names or progress/results of people who redeem its vouchers is a separate privacy and product decision; the default should be not to disclose individual candidate results to the organisation.
+Once payment is confirmed, Joomla presents the generated vouchers for the purchaser to download. **That is the end of the organisation's interaction with the website.** The organisation does not receive an account, dashboard or ongoing access to Joomla, and cannot return later to retrieve vouchers, view redemptions, see which staff or members have used them, or view candidates' examination progress or results. The purchaser is responsible for downloading the vouchers and distributing them.
+
+Joomla must, of course, retain the organisation purchase and voucher records internally. It must validate and mark each voucher as redeemed when an individual uses it, so that vouchers cannot be reused. This internal record-keeping is for the operation and administration of the certification system; it does not provide the organisation with post-purchase functionality or visibility.
 
 ## Candidate password and account-access workflow
 
@@ -428,7 +430,7 @@ An administrator view should make it possible to find a candidate and see their 
 - Which Synap administrator roles and actions are required to review a proctoring flag, finalise marks and release results?
 - Which RSForm!Pro payment-confirmation hook/event is appropriate for the installed version and Stripe integration?
 - What organisation purchase quantities, pricing tiers, voucher expiry rules and permitted examination types should be supported?
-- Should organisation purchasers be able to see voucher redemption status only, or any additional information about the candidates who redeem them? The default proposed policy is to keep individual results private.
+- What should the voucher download contain and how should the download be delivered immediately after confirmed payment? The organisation has no ongoing account, dashboard or post-purchase access.
 - Should retake eligibility be restricted to the language of the failed attempt, or may the candidate choose any of the six languages when purchasing again?
 - Should candidate emails be available in all six languages?
 - What is the Holopin organization badge/sticker ID to issue for a successful certification?
