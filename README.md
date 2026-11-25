@@ -24,7 +24,7 @@ The integration should keep the candidate-facing purchase and email experience o
 
 ## End-to-end workflow
 
-The flowchart below shows the complete candidate journey, from purchasing an examination through to the result email, badge issuance and public certification verification. The retake route returns to the same purchase process: RSForm!Pro applies the retake price, while Synap simply receives a request for a new attempt on the selected language examination.
+The flowchart below shows the complete candidate journey, including the separate submission, proctoring-review and result-release stages. A submitted attempt is not necessarily a final result. If Synap flags an attempt for proctoring review, Joomla records the pending review, tells the candidate that their result will be sent within one day, and notifies the Joomla administrators. Joomla only processes a pass or fail after Synap releases the result. The retake route returns to the same purchase process: RSForm!Pro applies the retake price, while Synap receives a new registration for the selected language examination.
 
 ```mermaid
 flowchart TD
@@ -37,29 +37,40 @@ flowchart TD
     F --> G{"Payment confirmed server-to-server?"}
     G -->|"No"| H["Do not allocate exam access"]
     G -->|"Yes"| I["Joomla creates registration and records language"]
-    I --> J["Joomla selects the matching Synap exam"]
-    J --> K["Synap creates a fresh attempt with random questions"]
-    K --> L["Joomla stores attempt details and unique exam link"]
+    I --> J["Joomla selects the matching Synap exam and its configured user group"]
+    J --> K["Joomla registers candidate with Synap; group membership generates a fresh attempt"]
+    K --> L["Joomla stores Synap user and attempt details"]
     L --> M["Joomla emails candidate the exam link"]
     M --> N["Candidate takes exam in Synap"]
-    N --> O["Synap sends final-result webhook to Joomla"]
-    O --> P["Joomla validates event and records result"]
-    P --> Q{"Passed?"}
-    Q -->|"Yes"| R["Joomla requests regular badge from Holopin"]
-    R --> S["Joomla stores private Holopin claim link"]
-    S --> T["Joomla sends congratulations email with claim link and social-sharing text"]
-    P --> U["Joomla records pass in certification records"]
-    U --> V{"Candidate consented to public listing?"}
-    V -->|"Yes"| W["Publish public Joomla verification profile"]
-    V -->|"No"| X["Keep record private; no public profile"]
-    W --> Y["Public can check an individuals certification status using permanent Joomla URL"]
-    Q -->|"No"| Z["Joomla sends failure email with retake discount"]
-    Z --> AA["Candidate returns to RSForm!Pro and purchases retake"]
-    AA --> B
-    T --> AB["Candidate may claim and share Holopin badge"]
-    AB --> AC["Holopin badge can link to Joomla verification profile"]
-    Y --> AD["Joomla remains the authoritative certification record"]
-    AC --> AD
+    N --> O["Synap notifies Joomla that the attempt has been submitted"]
+    O --> P["Joomla retrieves the attempt from the Synap API"]
+    P --> Q{"Does the attempt require proctoring review?"}
+    Q -->|"No"| R["Wait for Synap to release the result"]
+    Q -->|"Yes"| S["Joomla records a pending review and a 24-hour result deadline"]
+    S --> T["Joomla emails candidate: proctoring review required; results within one day"]
+    S --> U["Joomla notifies administrators that the attempt needs review"]
+    U --> V["Administrator reviews the attempt in Synap"]
+    V --> W["Synap finalises and releases the result"]
+    R --> W
+    W --> X["Synap notifies Joomla that the result has been released"]
+    X --> Y["Joomla retrieves attempt and verifies resultsStatus is released"]
+    Y --> Z["Joomla records final result and closes any pending review"]
+    Z --> AA{"Passed?"}
+    AA -->|"Yes"| AB["Joomla requests regular badge from Holopin"]
+    AB --> AC["Joomla stores private Holopin claim link"]
+    AC --> AD["Joomla sends congratulations email with claim link and social-sharing text"]
+    Z --> AE["Joomla records pass in certification records"]
+    AE --> AF{"Candidate consented to public listing?"}
+    AF -->|"Yes"| AG["Publish public Joomla verification profile"]
+    AF -->|"No"| AH["Keep record private; no public profile"]
+    AG --> AI["Public can verify certification using permanent Joomla URL"]
+    AA -->|"No"| AJ["Joomla sends failure email with retake discount"]
+    AJ --> AK["Candidate returns to RSForm!Pro and purchases retake"]
+    AK --> B
+    AD --> AL["Candidate may claim and share Holopin badge"]
+    AL --> AM["Holopin badge can link to Joomla verification profile"]
+    AI --> AN["Joomla remains the authoritative certification record"]
+    AM --> AN
 ```
 
 **Important:** A retake is not a separate Synap product or examination. It is a new paid registration and a new attempt on the same language-specific Synap examination. Synap does not need to know whether the candidate paid the standard fee or a discounted retake fee. The Joomla verification page remains the authoritative record; Holopin is an optional, shareable credential.
@@ -104,24 +115,61 @@ There is one Synap examination per language. Joomla does not need separate Synap
 
 Every successful purchase results in a new examination attempt against the Synap examination corresponding to the language selected for that purchase. Synap is responsible for applying its random-question configuration to the attempt.
 
-The integration must verify that the Synap API can create a fresh attempt and return a new candidate-specific link for each paid registration. In particular, it must confirm that a retake does not simply reopen a previously completed attempt.
+**Behaviour verified in the standalone API test:** registering a candidate through `POST /v3/user-registrations` with the appropriate `userGroups` relationship caused Synap to generate an attempt automatically. The returned attempt identified its registration method as `userGroup`. The integration should therefore use the group configured for the selected examination and retrieve the generated attempt for that candidate. The exact production user-group mapping for each of the six language examinations still needs to be configured and verified.
+
+The test also confirmed that attempts can be listed with `GET /v3/attempts` using an `owner` filter, and retrieved individually with `GET /v3/attempts/{attemptId}`. The integration must verify that each paid registration produces one fresh attempt and that a retake does not reopen a previously completed attempt.
 
 ## Examination completion and results
 
-Synap should notify Joomla when an examination attempt has been completed and its result is available.
+An examination being submitted and its result being released are separate stages. Synap may need to complete marking, finalise the marks and/or complete a proctoring review before the result is released. Joomla must not treat a score or grade returned for a submitted attempt as final until the attempt reports `resultsStatus: released`.
 
-The preferred approach is a Synap webhook to a dedicated Joomla endpoint. The exact event name, payload, delivery behaviour and authentication/signature mechanism must be confirmed against the Synap API version enabled for the account.
+The preferred notification mechanism is a Synap webhook to a dedicated Joomla endpoint. The exact event names, payloads, delivery behaviour and authentication/signature mechanism must be confirmed against the Synap API version enabled for the account. The intended flow uses one notification when the attempt is submitted and another when the result is released. If Synap does not provide a distinct submission event, Joomla will need another reliable way to detect submitted attempts.
 
-When a valid completion notification is received, Joomla should:
+### When an attempt is submitted
+
+When Joomla receives a submission notification, it should:
 
 1. Authenticate and validate the notification.
 2. Identify the relevant registration and attempt using stable Synap identifiers, not just the candidate's email address.
-3. Check that the event relates to an attempt known to Joomla.
-4. Record the completion date, score and pass/fail result where supplied.
-5. Mark the event as processed so that duplicate deliveries cannot trigger duplicate emails.
-6. Send the appropriate result email from Joomla.
+3. Confirm that the event relates to an attempt known to Joomla.
+4. Retrieve the current attempt from Synap using its attempt ID.
+5. Check the attempt's completion, proctoring and result fields.
+6. Record the submission timestamp and current status.
+7. Avoid sending a pass/fail email, issuing a badge or offering a retake until the result has been released.
 
-The integration must distinguish an attempt being submitted from its result being final. Where an examination requires marking or result processing, the candidate email must only be sent once the final result is available.
+The standalone API test confirmed that a submitted attempt can have `isCompleted: true` and `examStatus: submitted` while its result is still pending. In the test, Synap returned `resultsStatus: pending` and `resultsMarkingStatus: readyToFinalise`. A provisional `score` and `grade` were also present, but these must not be treated as the final outcome.
+
+### When proctoring review is required
+
+Some submitted attempts require a human proctoring review. The test confirmed that Synap exposes this condition through fields including `proctorRequiresReview: true` and `proctorStatus: readyForReview`. A proctoring review is performed in Synap by an authorised administrator; Joomla records and coordinates the outstanding work but does not itself approve the proctoring session.
+
+When the retrieved attempt requires review, Joomla should:
+
+1. Create or update a pending proctoring-review record linked to the Joomla registration, Synap user and Synap attempt.
+2. Record when the attempt was submitted and set a result-notification deadline one day (24 hours) after submission.
+3. Send the candidate an acknowledgement email explaining that their examination has been submitted and requires a proctoring review. The email must say that they will be notified of their result within one day and that no further action is required from them unless contacted.
+4. Notify the Joomla administrators that an examination requires proctoring review. The notification should identify the candidate, examination, submission time, Synap attempt and the deadline, and provide a link or reference that allows the administrator to open the attempt in Synap.
+5. Show the review as pending in Joomla's administration area until Synap reports that the review has been completed and the result released.
+
+The one-day period is the candidate-facing service commitment. Joomla should track the deadline so administrators can identify reviews that are approaching or have exceeded it. Notifications must be idempotent: duplicate webhook deliveries must not send repeated acknowledgement emails or create duplicate review tasks.
+
+The review and result-release stages are distinct. In the test, approving the proctoring review changed the attempt to `proctorIsApproved: true` and `proctorStatus: passed`, and cleared `proctorRequiresReview`. The marks were then finalised, with `resultsStatus: finalised` and `resultsMarkingStatus: completed`. A subsequent release action changed `resultsStatus` to `released`, set `deferred.locked: false` and populated the `releasedBy` relationship. Joomla must wait for the release state, not merely the proctor approval or marking finalisation.
+
+If no proctoring review is required, Joomla should still wait until Synap reports that the result has been released. A submission notification alone is never sufficient to trigger the pass/fail workflow.
+
+### When the result is released
+
+When Synap notifies Joomla that the result has been released, Joomla should:
+
+1. Authenticate and validate the notification.
+2. Retrieve the attempt from Synap and confirm that `resultsStatus` is exactly `released`.
+3. Confirm that the attempt belongs to the expected Joomla registration and candidate.
+4. Record the final completion date, score, grade and pass/fail outcome.
+5. Mark the event as processed so duplicate deliveries cannot trigger duplicate actions.
+6. Close any pending proctoring-review record.
+7. Send the appropriate result email from Joomla and perform the relevant certification actions.
+
+The test confirmed that the released attempt includes the final score and grade, `resultsStatus: released`, and a populated `releasedBy` relationship. Joomla should use the released attempt as the authoritative source for the outcome.
 
 ### Successful result
 
@@ -179,7 +227,7 @@ The directory should support pagination and search/filtering as its population g
 
 ### Unsuccessful result
 
-When the candidate fails, Joomla sends a failure email. This email includes information about purchasing a retake and the applicable discount code.
+When the candidate fails and Synap has released the result, Joomla sends a failure email. This email includes information about purchasing a retake and the applicable discount code. If the attempt previously required proctoring review, this is the result email promised in the pending-review acknowledgement.
 
 The result and email status should be stored so that an email can be retried after a delivery problem without changing or reprocessing the examination result.
 
@@ -227,10 +275,11 @@ At a minimum, the data model should capture:
 - Synap examination ID
 - Synap attempt ID or other stable attempt reference
 - Candidate-specific examination link, if appropriate to retain
-- Attempt status
-- Completion timestamp
-- Score, where supplied
-- Pass/fail result
+- Attempt status, submission timestamp and result-release status/timestamp
+- Proctoring enabled/status, whether review is required, approval status and review timestamp
+- Pending-review status, notification timestamps and 24-hour result-notification deadline
+- Score and grade, where supplied (treated as provisional until the result is released)
+- Final pass/fail result
 - Result-email status and timestamp
 - Holopin badge/sticker ID
 - Holopin coupon ID and private claim URL
@@ -241,10 +290,11 @@ At a minimum, the data model should capture:
 ### Webhook/event processing
 
 - Provider event ID, where supplied
-- Event type
+- Event type (submission or result release)
 - Related registration/attempt reference
 - Received and processed timestamps
 - Processing status and diagnostic information
+- Pending proctoring-review notification state, to prevent duplicate candidate/admin notifications
 
 An administrator view should make it possible to find a candidate and see their purchases, payment status, selected language, Synap examination/attempt references, result and email status. Resending an email should not create another examination attempt.
 
@@ -255,6 +305,9 @@ An administrator view should make it possible to find a candidate and see their 
 - **Idempotency:** Repeated Stripe or Synap notifications must not create duplicate registrations, attempts or emails.
 - **Retry handling:** If Synap is unavailable after payment, retain the paid registration as pending allocation and retry safely. The candidate must not have to pay again.
 - **Email handling:** Save the result before sending email. Record delivery attempts and allow an administrator to retry email delivery independently.
+- **Proctoring review:** When a submitted attempt requires review, notify the candidate that results will be provided within one day, notify Joomla administrators, and record a 24-hour deadline. Do not send a pass/fail email or issue a badge until Synap reports that the result has been released.
+- **Review notification idempotency:** Duplicate submission webhooks must not create duplicate pending-review records or send duplicate candidate acknowledgement/admin notifications.
+- **Result release:** Treat submission, proctor approval, marking finalisation and result release as distinct states. Only process the final outcome when the retrieved attempt reports `resultsStatus: released`.
 - **Credentials:** Keep Synap and Stripe secrets on the server, outside public assets and source control. Use least-privilege credentials where supported.
 - **Data protection:** Store only the candidate and examination data needed for the service, restrict administrator access and define appropriate retention periods. Obtain and record explicit consent before publishing personal details in the public certified-user directory; provide a process for correcting or removing public profile information where appropriate.
 - **Public/private separation:** Never expose email addresses, payment data, internal identifiers, examination scores or Holopin claim URLs in public directory pages or public APIs.
@@ -265,13 +318,13 @@ An administrator view should make it possible to find a candidate and see their 
 
 1. **Verify Synap access and API capabilities.** Confirm the API version, authentication, account permissions and availability of the required user, examination, attempt, candidate-link and webhook operations.
 2. **Build a standalone API test.** Authenticate, retrieve the six examinations, find or create a test candidate, create a fresh attempt and obtain its candidate-specific link.
-3. **Verify result notifications.** Configure a test webhook, inspect its payload and authentication, and confirm when a final pass/fail result is available.
+3. **Verify submission and result-release notifications.** Configure test webhooks, inspect their payloads and authentication, establish the exact event names, and confirm how Joomla detects a submitted attempt, a required proctoring review and a released final result.
 4. **Implement the Joomla integration.** Add configuration for the six language-to-examination mappings, registration/attempt storage, API service and webhook endpoint.
 5. **Integrate RSForm!Pro and Stripe.** Connect confirmed payment events to registration and attempt allocation. Keep initial and retake pricing in the form/payment workflow.
 6. **Integrate Holopin.** Configure the regular badge/sticker ID and API credentials, issue a badge after a final pass, and verify that Joomla receives and stores the unique claim URL.
 7. **Implement Joomla emails.** Add access, congratulations and failure/retake templates, with language-aware content as required. Include the Holopin claim link and suggested social-sharing text in the success email.
 8. **Build the public certified-user directory.** Add candidate consent, searchable public listings and individual verification pages using Joomla's verified pass records.
-9. **Add administration and recovery tools.** Provide registration/attempt views, badge issuance and directory-publication status, plus safe email/allocation/badge retries.
+9. **Add administration and recovery tools.** Provide registration/attempt views, a pending-proctoring-review queue with 24-hour deadlines, administrator notifications, badge issuance and directory-publication status, plus safe email/allocation/badge retries.
 10. **Test end to end.** Cover each language, successful and failed payments, pass and fail results, retake purchases, duplicate webhooks, duplicate badge prevention, directory consent, email failures and Synap/Holopin API outages.
 
 ## Open questions to resolve before implementation
@@ -280,7 +333,9 @@ An administrator view should make it possible to find a candidate and see their 
 - Does the Synap account have access to the required API version, candidate management, attempt creation and webhooks?
 - Which exact API operation creates a fresh attempt and returns a new candidate-specific examination link?
 - Does Synap apply the random-question configuration independently to every attempt created through the API?
-- What is the exact webhook event and payload for a final examination result, and how is the webhook authenticated?
+- What are the exact webhook event names and payloads for an attempt being submitted and a result being released, and how are the webhooks authenticated?
+- Does Synap always send a submission notification before a result-release notification, including when no proctoring review is required?
+- Which Synap administrator roles and actions are required to review a proctoring flag, finalise marks and release results?
 - Which RSForm!Pro payment-confirmation hook/event is appropriate for the installed version and Stripe integration?
 - Should retake eligibility be restricted to the language of the failed attempt, or may the candidate choose any of the six languages when purchasing again?
 - Should candidate emails be available in all six languages?
