@@ -40,8 +40,8 @@ flowchart TD
     I --> J["Joomla selects the matching Synap exam and its configured user group"]
     J --> K["Joomla registers candidate with Synap; group membership generates a fresh attempt"]
     K --> L["Joomla stores Synap user and attempt details"]
-    L --> M["Joomla emails candidate the exam link"]
-    M --> N["Candidate takes exam in Synap"]
+    L --> M["Joomla emails candidate exam access instructions using the agreed password workflow"]
+    M --> N["Candidate signs in to Synap and takes the exam"]
     N --> O["Synap notifies Joomla that the attempt has been submitted"]
     O --> P["Joomla retrieves the attempt from the Synap API"]
     P --> Q{"Does the attempt require proctoring review?"}
@@ -106,6 +106,42 @@ The table deliberately uses placeholders until the Synap examination IDs are con
 8. Joomla stores the relevant Synap identifiers and the access link, then sends the candidate an examination email containing the link and instructions.
 
 A payment must not result in examination access being issued more than once. Payment notifications and the allocation process must therefore be safe to retry.
+
+## Candidate password and account-access workflow
+
+A candidate needs a Synap account password to sign in and open their candidate-specific examination link. The password workflow must be agreed before the production registration process and candidate emails are implemented.
+
+Three approaches have been considered:
+
+### Option 1: Generate a password and send it to the candidate
+
+After confirmed payment, Joomla generates a strong random password and includes it with the candidate's examination link in an email.
+
+This is straightforward to implement and avoids asking the candidate to choose another password during checkout. However, sending a working password by email is not ideal: the password may remain in mailboxes, forwarded messages or other email systems, and the candidate must retain it for future access. This should not be the preferred approach unless Synap cannot support a safer setup process and the security implications are explicitly accepted.
+
+### Option 2: Ask the candidate to choose a password in RSForm!Pro
+
+The candidate enters a password as part of the Joomla registration form. Joomla passes that password to Synap when creating the account.
+
+This lets the candidate choose a password they can remember and avoids sending a working password by email. However, it means handling a password in the RSForm!Pro submission process. The implementation would have to ensure that the password is never retained in form submissions, email notifications, logs, exports or other stored submission data, and is transmitted securely to Synap. This adds avoidable security and data-handling risks to the purchase form.
+
+### Option 3: Generate a password initially, then let the candidate set their own
+
+After confirmed payment, Joomla generates a strong random password and uses it to create the Synap account. Joomla then obtains a password-setup or password-reset link and emails the candidate a link to choose their own Synap password. The candidate can subsequently use that password with the exam link and for future access.
+
+This is the preferred approach, provided Synap supports it through an API operation or another supported mechanism. It avoids collecting a password in RSForm!Pro and avoids sending a working password to the candidate. The generated password is only an initial credential and should not be disclosed to the candidate.
+
+### Question to ask Synap
+
+Before choosing Option 3, confirm the supported password-setup workflow with Synap. The specific question is:
+
+> When an external integration creates a new candidate using `POST /v3/user-registrations` and supplies an initial password, is there a v3 API endpoint or supported operation that allows the integration to generate or retrieve a one-time password-setup/password-reset URL for that user?
+>
+> Ideally, we want Joomla to send all candidate emails itself. Can the API return a setup URL without Synap sending its own password-reset email, so that Joomla can include the URL in its own email? If this is supported, please provide the exact endpoint, request and response fields, required permissions, URL expiry and whether the link is single-use. If it is not supported, what is the recommended way for an externally registered candidate to set their own password before accessing an exam?
+
+Until Synap answers this question, the password workflow remains an open implementation decision. Do not add a password field to RSForm!Pro or finalise the candidate access email on the assumption that a password-setup endpoint exists.
+
+Regardless of the chosen approach, passwords must not be stored in Joomla registration records, included in logs, or exposed in public pages. Synap remains responsible for authenticating the candidate; Joomla should retain only the identifiers and status information needed to coordinate registration and exam access.
 
 ## Examination attempts and random questions
 
@@ -309,6 +345,7 @@ An administrator view should make it possible to find a candidate and see their 
 - **Review notification idempotency:** Duplicate submission webhooks must not create duplicate pending-review records or send duplicate candidate acknowledgement/admin notifications.
 - **Result release:** Treat submission, proctor approval, marking finalisation and result release as distinct states. Only process the final outcome when the retrieved attempt reports `resultsStatus: released`.
 - **Credentials:** Keep Synap and Stripe secrets on the server, outside public assets and source control. Use least-privilege credentials where supported.
+- **Candidate passwords:** Prefer a Synap-supported one-time password-setup flow. Do not collect candidate passwords in RSForm!Pro unless the submission storage, notifications, logs and exports can be proven not to retain them. Never email a working password as the default approach.
 - **Data protection:** Store only the candidate and examination data needed for the service, restrict administrator access and define appropriate retention periods. Obtain and record explicit consent before publishing personal details in the public certified-user directory; provide a process for correcting or removing public profile information where appropriate.
 - **Public/private separation:** Never expose email addresses, payment data, internal identifiers, examination scores or Holopin claim URLs in public directory pages or public APIs.
 - **Holopin issuance:** Issue a badge only for a final passing result, store the returned coupon/claim reference securely, and prevent duplicate issuance when events are retried.
@@ -332,6 +369,7 @@ An administrator view should make it possible to find a candidate and see their 
 - Which six languages are offered, and what are their corresponding Synap examination IDs?
 - Does the Synap account have access to the required API version, candidate management, attempt creation and webhooks?
 - Which exact API operation creates a fresh attempt and returns a new candidate-specific examination link?
+- What is the supported password-setup process for a candidate created through the API? Can the v3 API generate or return a one-time password-setup/reset URL without Synap sending its own email, so Joomla can send the link? What are the endpoint, permissions, expiry and single-use rules?
 - Does Synap apply the random-question configuration independently to every attempt created through the API?
 - What are the exact webhook event names and payloads for an attempt being submitted and a result being released, and how are the webhooks authenticated?
 - Does Synap always send a submission notification before a result-release notification, including when no proctoring review is required?
