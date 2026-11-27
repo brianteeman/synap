@@ -128,7 +128,7 @@ Joomla sends the candidate an email containing:
 
 Synap's own welcome email remains disabled.
 
-## 5. Overall workflow
+## 5. Overall registration workflow
 
 ```text
 Joomla receives confirmed registration/payment
@@ -162,7 +162,7 @@ Joomla emails candidate:
   - Temporary password
 ```
 
-## 6. Current implementation decision
+## 6. Current registration implementation decision
 
 The current agreed approach is:
 
@@ -176,3 +176,200 @@ The current agreed approach is:
 **Important:** We have confirmed that candidate creation and exam assignment can be handled in a single POST. We have not confirmed a single API call that also returns the unique exam URL.
 
 The only outstanding question in this part of the integration is whether Synap can support passwordless access, allowing candidates to follow their personalised exam link without separately entering a Synap username and password.
+
+## 7. Monitor exam results using webhooks
+
+Joomla monitors the candidate's exam progress using two separate Synap webhook subscriptions. Both subscriptions point to the same Joomla webhook endpoint, but they listen for different events.
+
+The two events are:
+
+| Synap event | Purpose |
+|---|---|
+| `Exam Attempt Submitted` (`exam.submitted`) | Notifies Joomla that the candidate has submitted the exam |
+| `Exam Attempt Released` (`exam.released`) | Notifies Joomla that the results have been released and can be processed as final |
+
+### Configure the two webhook subscriptions
+
+In Synap, create two webhook subscriptions using the same Joomla endpoint URL:
+
+1. Subscribe to **Exam Attempt Submitted**.
+2. Subscribe to **Exam Attempt Released**.
+
+Both subscriptions use HTTP Basic Authentication. Joomla's endpoint must validate the Basic Authentication credentials before accepting and processing a webhook.
+
+The endpoint receives both event types. It uses `meta.eventName` in the payload to determine which event Synap has sent.
+
+### Webhook 1: Exam Attempt Submitted
+
+The submitted event has:
+
+```json
+{
+  "meta": {
+    "eventName": "exam.submitted"
+  },
+  "id": "ATTEMPT_ID"
+}
+```
+
+The attempt ID is at the top level of this payload, in `id`.
+
+This event means that the candidate has submitted their exam. It does **not** mean that the result is final or ready to be communicated as a pass or fail.
+
+In testing, a submitted attempt could have values such as:
+
+- `isCompleted: true`
+- `examStatus: "submitted"`
+- `resultsStatus: "pending"`
+- `resultsMarkingStatus: "readyToFinalise"`
+- `proctorRequiresReview: true`
+- `proctorStatus: "readyForReview"`
+
+A provisional score or grade may also be present. Joomla must not treat that as the final result.
+
+When Joomla receives this event, it should record that the candidate has submitted the exam and retrieve the attempt from the Synap API if it needs the latest attempt details.
+
+If the attempt requires proctor review, Joomla should notify the administrators and track the review. The candidate should receive an acknowledgement explaining that their result will be available within 24 hours. Joomla must wait for the released event before sending a pass or fail email.
+
+### Webhook 2: Exam Attempt Released
+
+The released event has a different payload structure:
+
+```json
+{
+  "meta": {
+    "eventName": "exam.released"
+  },
+  "attempt": {
+    "id": "ATTEMPT_ID"
+  }
+}
+```
+
+The attempt ID is nested inside `attempt.id`, not at the top level.
+
+This event indicates that Synap has released the result. Joomla can now retrieve the attempt details and process the final outcome.
+
+### Always verify the result using the Synap API
+
+The webhook is the notification that something has happened. Joomla should retrieve the attempt details from Synap and check the current result status before taking action.
+
+The key check is:
+
+```text
+resultsStatus === "released"
+```
+
+Only when the API confirms that `resultsStatus` is `released` should Joomla treat the result as final and proceed with the pass/fail workflow.
+
+Testing confirmed that an attempt can move through several states before release. For example, after submission it may be pending or awaiting proctor review. Following approval, it may be finalised but still not released. The result is ready for Joomla to process only when its status is `released`.
+
+### Important differences between the two webhook payloads
+
+The attempt ID is in a different place depending on the event:
+
+| Event | Event name | Attempt ID location |
+|---|---|---|
+| Submitted | `exam.submitted` | `id` |
+| Released | `exam.released` | `attempt.id` |
+
+Joomla's webhook handler must account for this difference when extracting the attempt ID.
+
+### Joomla result-processing workflow
+
+```text
+Candidate submits exam
+          |
+          v
+Synap sends exam.submitted webhook
+          |
+          v
+Joomla authenticates webhook
+          |
+          v
+Extract attempt ID from payload.id
+          |
+          v
+Retrieve attempt details from Synap API
+          |
+          v
+Is proctor review required?
+          |
+      +---+---+
+      |       |
+     Yes      No
+      |       |
+      v       |
+Notify admins |
+Acknowledge   |
+submission    |
+to candidate  |
+      |       |
+Wait for      |
+review        |
+      |       |
+      +---+---+
+          |
+          v
+Synap releases result
+          |
+          v
+Synap sends exam.released webhook
+          |
+          v
+Joomla authenticates webhook
+          |
+          v
+Extract attempt ID from payload.attempt.id
+          |
+          v
+Retrieve attempt details from Synap API
+          |
+          v
+Check resultsStatus === "released"
+          |
+          v
+Process final pass/fail result
+          |
+          v
+Send candidate result email
+          |
+          +--> If passed: issue Holopin badge
+          |
+          +--> If passed: publish to certified-user
+               directory if candidate has opted in
+```
+
+### Result-processing rules
+
+- Do not process a submitted event as a final result.
+- Do not use a provisional score or grade to determine pass or fail.
+- Do not assume that a finalised result has been released.
+- Retrieve the attempt from Synap and verify `resultsStatus === "released"` before processing the result.
+- Handle the two event payloads separately because the attempt ID is in a different location.
+- Make result processing idempotent so that receiving the same notification more than once cannot send duplicate emails, issue duplicate badges or create duplicate directory entries.
+
+### Testing observations
+
+The two webhook subscriptions were tested against the same temporary PHP receiver.
+
+Both event types were received successfully:
+
+- `exam.submitted`
+- `exam.released`
+
+The submitted payload contained the attempt ID at the top level. The released payload contained it under `attempt.id`.
+
+Testing also confirmed that a submitted attempt can be awaiting proctor review, and that an attempt can be finalised without yet being released. The released status is therefore the important condition for final result processing.
+
+The webhook receiver used for these tests was temporary and is not the production Joomla handler.
+
+### Items still to confirm
+
+The following webhook behaviours have not yet been fully established:
+
+- Synap's webhook retry policy when the receiving endpoint is unavailable or returns an error.
+- Whether Synap provides a unique event identifier that Joomla can use for webhook-level deduplication.
+- How Synap handles delivery order if events are delayed or arrive out of order.
+
+Joomla should still make its own result-processing logic idempotent and verify the current attempt status through the API rather than relying solely on webhook delivery order.
